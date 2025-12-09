@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from "react";
 
-const AssetTable = ({ assets, getRate }) => {
+const AssetTable = ({ assets, getRate, onDelete }) => {
   const prevDailyPnLRef = useRef({});
   const [flashMap, setFlashMap] = useState({});
 
@@ -8,7 +8,7 @@ const AssetTable = ({ assets, getRate }) => {
     const newFlashMap = {};
 
     assets.forEach((asset) => {
-      const id = asset.ticker || asset.name;
+      const id = asset.id || asset.ticker || asset.name;
       const rate = getRate(asset.currency);
       const dailyChange = asset.dailyChange || 0;
       const quantity = asset.quantity || 0;
@@ -60,7 +60,7 @@ const AssetTable = ({ assets, getRate }) => {
       </thead>
       <tbody>
         {assets.map((asset) => {
-          const id = asset.ticker || asset.name;
+          const id = asset.id || asset.ticker || asset.name;
           const ticker = asset.ticker || "";
 
           const rate = getRate(asset.currency);
@@ -91,51 +91,60 @@ const AssetTable = ({ assets, getRate }) => {
               ? "flash-down"
               : "";
 
+          const handleDeleteClick = () => {
+            if (!onDelete) return;
+            if (window.confirm(`¿Eliminar ${asset.ticker || asset.name}?`)) {
+              onDelete(id);
+            }
+          };
+
           return (
             <tr key={id}>
-              {/* Nombre */}
               <td>{asset.name || "-"}</td>
 
-              {/* G/P diaria en EUR con flash */}
               <td className={`table-cell-right ${dailyClass} ${flashClass}`}>
                 {formatCurrencyWithTicker(dailyPnLEur, ticker)}
               </td>
 
-              {/* Valor actual en EUR */}
               <td className="table-cell-right">
                 {formatCurrencyWithTicker(currentValueEur, ticker)}
               </td>
 
-              {/* G/P total en EUR */}
               <td className={`table-cell-right ${pnlClass}`}>
                 {formatCurrencyWithTicker(pnlEur, ticker)}
               </td>
 
-              {/* % cambio total */}
               <td className={`table-cell-right ${pnlClass}`}>
                 {formatPercent(pnlPercent)}
               </td>
 
-              {/* Precio actual (EUR) */}
               <td className="table-cell-right">
                 {formatCurrencyWithTicker(currentPrice * rate, ticker, 3)}
               </td>
 
-              {/* Precio compra (EUR) */}
               <td className="table-cell-right">
                 {formatCurrencyWithTicker(asset.buyPrice * rate, ticker, 3)}
               </td>
 
-              {/* Cantidad */}
               <td className="table-cell-right">{quantity}</td>
 
-              {/* Ticker (última) */}
               <td>{ticker || "-"}</td>
 
-              {/* Acciones */}
               <td>
-                <span style={{ cursor: "pointer", marginRight: 8 }}>✏️</span>
-                <span style={{ cursor: "pointer" }}>🗑️</span>
+                {/* Edición pendiente */}
+                <span
+                  style={{ cursor: "not-allowed", marginRight: 8, opacity: 0.4 }}
+                  title="Edición pendiente"
+                >
+                  ✏️
+                </span>
+                <span
+                  style={{ cursor: "pointer" }}
+                  title="Eliminar activo"
+                  onClick={handleDeleteClick}
+                >
+                  🗑️
+                </span>
               </td>
             </tr>
           );

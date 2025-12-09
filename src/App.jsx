@@ -172,6 +172,19 @@ const App = () => {
     setIsFormVisible(false);
   };
 
+  // 2bis) Eliminar activo: borrar en Supabase + actualizar estado local
+  const handleDeleteAsset = async (id) => {
+    const { error } = await supabase.from("assets").delete().eq("id", id);
+
+    if (error) {
+      console.error("Error eliminando asset en Supabase", error);
+      alert("Error eliminando en Supabase: " + error.message);
+      return;
+    }
+
+    setAssets((prev) => prev.filter((a) => a.id !== id));
+  };
+
   // 3) Actualización periódica de precios con Yahoo
   useEffect(() => {
     if (assets.length === 0) return;
@@ -446,7 +459,11 @@ const App = () => {
             <h2>Detalle de Activos</h2>
           </div>
           <div className="panel-body table-container">
-            <AssetTable assets={assets} getRate={getRate} />
+            <AssetTable
+              assets={assets}
+              getRate={getRate}
+              onDelete={handleDeleteAsset}
+            />
           </div>
         </section>
 
