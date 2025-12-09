@@ -5,19 +5,12 @@ import AssetTable from "./components/AssetTable";
 import { getQuotesYahoo, getEurPerUsd } from "./yahooApi";
 import PortfolioHistoryChart from "./components/PortfolioHistoryChart";
 import AllocationPieChart from "./components/AllocationPieChart";
+import { supabase } from "./supabaseClient";
 import "./index.css";
 
 const App = () => {
-  // Activos (persistidos en localStorage)
-  const [assets, setAssets] = useState(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const stored = window.localStorage.getItem("portfolio_assets");
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  // Activos cargados desde Supabase
+  const [assets, setAssets] = useState([]);
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -34,16 +27,44 @@ const App = () => {
 
   const getRate = (currency) => fxRates[currency] || 1;
 
-  // Guardar activos en localStorage
+  // 1) Cargar activos desde Supabase al iniciar
   useEffect(() => {
-    try {
-      window.localStorage.setItem("portfolio_assets", JSON.stringify(assets));
-    } catch (e) {
-      console.error("Error guardando activos en localStorage", e);
-    }
-  }, [assets]);
+    const loadAssets = async () => {
+      const { data, error } = await supabase
+        .from("assets")
+        .select("*")
+        .order("name", { ascending: true });
 
-  // Tema desde localStorage
+      if (error) {
+        console.error("Error cargando assets de Supabase", error);
+        return;
+      }
+
+      if (data) {
+        console.log("Assets cargados desde Supabase:", data);
+        setAssets(
+          data.map((row) => ({
+            id: row.id,
+            name: row.name,
+            ticker: row.ticker,
+            quantity: Number(row.quantity || 0),
+            buyPrice: Number(row.buy_price || 0),
+            currentPrice: Number(
+              row.current_price || row.buy_price || 0
+            ),
+            currency: row.currency || "EUR",
+            date: row.date || "",
+            dailyChange: 0,
+            dailyChangePercent: 0,
+          }))
+        );
+      }
+    };
+
+    loadAssets();
+  }, []);
+
+  // Tema desde localStorage (solo preferencia visual)
   useEffect(() => {
     const stored = localStorage.getItem("theme");
     if (stored === "light") setIsDarkMode(false);
@@ -72,7 +93,7 @@ const App = () => {
     second: "2-digit",
   });
 
-  // FX USD->EUR real con Yahoo
+  // FX USD->EUR real con Yahoo (cada 10 minutos)
   useEffect(() => {
     let cancelled = false;
 
@@ -98,21 +119,51 @@ const App = () => {
     };
   }, []);
 
-  // Añadir activo y cerrar formulario
-  const handleAddAsset = (newAsset) => {
+  // 2) Añadir activo: insertar en Supabase + actualizar estado local
+  const handleAddAsset = async (newAsset) => {
+    console.log("Nuevo activo recibido del formulario:", newAsset);
+
+    const record = {
+      name: newAsset.name,
+      ticker: newAsset.ticker,
+      quantity: Number(newAsset.quantity || 0),
+      buy_price: Number(newAsset.buyPrice || 0),
+      current_price: Number(
+        newAsset.currentPrice || newAsset.buyPrice || 0
+      ),
+      currency: newAsset.currency || "EUR",
+      date: newAsset.date || null,
+    };
+
+    console.log("Registro que se va a insertar en Supabase:", record);
+
+    const { data, error } = await supabase
+      .from("assets")
+      .insert(record)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error insertando asset en Supabase", error);
+      alert("Error guardando en Supabase: " + error.message);
+      return;
+    }
+
+    console.log("Insert OK, fila devuelta por Supabase:", data);
+
     setAssets((prev) => [
       ...prev,
       {
-        ...newAsset,
-        name: newAsset.name,
-        ticker: newAsset.ticker,
-        quantity: Number(newAsset.quantity || 0),
-        buyPrice: Number(newAsset.buyPrice || 0),
+        id: data.id,
+        name: data.name,
+        ticker: data.ticker,
+        quantity: Number(data.quantity || 0),
+        buyPrice: Number(data.buy_price || 0),
         currentPrice: Number(
-          newAsset.currentPrice || newAsset.buyPrice || 0
+          data.current_price || data.buy_price || 0
         ),
-        currency: newAsset.currency || "EUR",
-        date: newAsset.date || "",
+        currency: data.currency || "EUR",
+        date: data.date || "",
         dailyChange: 0,
         dailyChangePercent: 0,
       },
@@ -121,7 +172,7 @@ const App = () => {
     setIsFormVisible(false);
   };
 
-  // Actualización periódica de precios con Yahoo
+  // 3) Actualización periódica de precios con Yahoo
   useEffect(() => {
     if (assets.length === 0) return;
 
@@ -345,7 +396,9 @@ const App = () => {
               <span className="stat-label">Inversión</span>
               <span className="stat-icon">💳</span>
             </div>
-            <div className="stat-value">{formatCurrency(totalInvestment)}</div>
+            <div className="stat-value">
+              {formatCurrency(totalInvestment)}
+            </div>
           </div>
 
           <div className="stat-card stat-green">
