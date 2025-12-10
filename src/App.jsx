@@ -3,7 +3,7 @@ import DarkModeToggle from "./components/DarkModeToggle";
 import AddAssetForm from "./components/AddAssetForm";
 import AssetTable from "./components/AssetTable";
 import { getEurPerUsd } from "./yahooApi";
-import { getQuotesWithFallback } from "./priceApi";
+import { getQuotesTwelveData } from "./priceApi";
 import PortfolioHistoryChart from "./components/PortfolioHistoryChart";
 import AllocationPieChart from "./components/AllocationPieChart";
 import { supabase } from "./supabaseClient";
@@ -173,7 +173,7 @@ const App = () => {
     setAssets((prev) => prev.filter((a) => a.id !== id));
   };
 
-  // Actualización de precios con Alpha Vantage + Yahoo fallback
+  // Actualización de precios con Twelve Data cada 15 minutos
   useEffect(() => {
     if (assets.length === 0) return;
 
@@ -184,7 +184,7 @@ const App = () => {
         const symbols = assets.map((a) => a.ticker).filter(Boolean);
         if (!symbols.length) return;
 
-        const quotes = await getQuotesWithFallback(symbols);
+        const quotes = await getQuotesTwelveData(symbols);
         if (cancelled) return;
 
         setAssets((prev) =>
@@ -200,7 +200,7 @@ const App = () => {
           })
         );
       } catch (e) {
-        console.error("Error actualizando precios con Alpha+Yahoo", e);
+        console.error("Error actualizando precios con Twelve Data", e);
       }
     };
 
