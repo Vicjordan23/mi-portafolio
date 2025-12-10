@@ -2,24 +2,22 @@ import React, { useState, useEffect } from "react";
 import DarkModeToggle from "./components/DarkModeToggle";
 import AddAssetForm from "./components/AddAssetForm";
 import AssetTable from "./components/AssetTable";
-import { getQuotesYahoo, getEurPerUsd } from "./yahooApi";
+import { getEurPerUsd } from "./yahooApi";
+import { getQuotesAlphaBatch } from "./priceApi";
 import PortfolioHistoryChart from "./components/PortfolioHistoryChart";
 import AllocationPieChart from "./components/AllocationPieChart";
 import { supabase } from "./supabaseClient";
 import "./index.css";
 
 const App = () => {
-  // Activos cargados desde Supabase
   const [assets, setAssets] = useState([]);
-
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [history, setHistory] = useState([]);
   const [historyRange, setHistoryRange] = useState("1M");
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [viewMode, setViewMode] = useState("desktop"); // "mobile" | "tablet" | "desktop"
+  const [viewMode, setViewMode] = useState("desktop");
 
-  // Tipos de cambio en EUR: EUR=1, USD dinámico
   const [fxRates, setFxRates] = useState({
     EUR: 1,
     USD: 0.92,
@@ -27,7 +25,7 @@ const App = () => {
 
   const getRate = (currency) => fxRates[currency] || 1;
 
-  // 1) Cargar activos desde Supabase al iniciar
+  // Cargar activos desde Supabase
   useEffect(() => {
     const loadAssets = async () => {
       const { data, error } = await supabase
@@ -64,7 +62,7 @@ const App = () => {
     loadAssets();
   }, []);
 
-  // Tema desde localStorage (solo preferencia visual)
+  // Tema oscuro desde localStorage
   useEffect(() => {
     const stored = localStorage.getItem("theme");
     if (stored === "light") setIsDarkMode(false);
@@ -75,15 +73,11 @@ const App = () => {
     localStorage.setItem("theme", isDarkMode ? "dark" : "light");
   }, [isDarkMode]);
 
-  const toggleDarkMode = () => {
-    setIsDarkMode((prev) => !prev);
-  };
+  const toggleDarkMode = () => setIsDarkMode((p) => !p);
 
-  // Reloj en vivo
+  // Reloj
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
+    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -93,7 +87,7 @@ const App = () => {
     second: "2-digit",
   });
 
-  // FX USD->EUR real con Yahoo (cada 10 minutos)
+  // FX USD/EUR con Yahoo cada 10 minutos
   useEffect(() => {
     let cancelled = false;
 
@@ -101,10 +95,7 @@ const App = () => {
       try {
         const usdEur = await getEurPerUsd();
         if (cancelled || !usdEur) return;
-        setFxRates((prev) => ({
-          ...prev,
-          USD: usdEur,
-        }));
+        setFxRates((prev) => ({ ...prev, USD: usdEur }));
       } catch (e) {
         console.error("Error obteniendo EUR/USD", e);
       }
@@ -112,14 +103,13 @@ const App = () => {
 
     updateFx();
     const interval = setInterval(updateFx, 10 * 60 * 1000);
-
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
   }, []);
 
-  // 2) Añadir activo: insertar en Supabase + actualizar estado local
+  // Añadir activo (Supabase)
   const handleAddAsset = async (newAsset) => {
     console.log("Nuevo activo recibido del formulario:", newAsset);
 
@@ -172,20 +162,18 @@ const App = () => {
     setIsFormVisible(false);
   };
 
-  // 2bis) Eliminar activo: borrar en Supabase + actualizar estado local
+  // Borrar activo (Supabase)
   const handleDeleteAsset = async (id) => {
     const { error } = await supabase.from("assets").delete().eq("id", id);
-
     if (error) {
       console.error("Error eliminando asset en Supabase", error);
       alert("Error eliminando en Supabase: " + error.message);
       return;
     }
-
     setAssets((prev) => prev.filter((a) => a.id !== id));
   };
 
-  // 3) Actualización periódica de precios con Yahoo
+  // Actualización de precios con Alpha Vantage
   useEffect(() => {
     if (assets.length === 0) return;
 
@@ -193,8 +181,10 @@ const App = () => {
 
     const updatePrices = async () => {
       try {
-        const symbols = assets.map((a) => a.ticker);
-        const quotes = await getQuotesYahoo(symbols);
+        const symbols = assets.map((a) => a.ticker).filter(Boolean);
+        if (!symbols.length) return;
+
+        const quotes = await getQuotesAlphaBatch(symbols);
         if (cancelled) return;
 
         setAssets((prev) =>
@@ -210,12 +200,13 @@ const App = () => {
           })
         );
       } catch (e) {
-        console.error("Error actualizando precios Yahoo", e);
+        console.error("Error actualizando precios con Alpha Vantage", e);
       }
     };
 
     updatePrices();
-    const interval = setInterval(updatePrices, 60000);
+    // Cada 15 minutos para ir sobrado de límites
+    const interval = setInterval(updatePrices, 15 * 60 * 1000);
 
     return () => {
       cancelled = true;
@@ -286,13 +277,10 @@ const App = () => {
     });
   }, [totalValue]);
 
-  // Filtrar historial según rango
   const filteredHistory = (() => {
     if (!history.length) return [];
-
     const now = Date.now();
     let diffMs;
-
     switch (historyRange) {
       case "1D":
         diffMs = 1 * 24 * 60 * 60 * 1000;
@@ -309,12 +297,10 @@ const App = () => {
       default:
         diffMs = 30 * 24 * 60 * 60 * 1000;
     }
-
     const minTs = now - diffMs;
     return history.filter((p) => p.timestamp >= minTs);
   })();
 
-  // Datos tarta
   const allocationData = (() => {
     if (!totalValue) return [];
     return assets.map((a) => {
@@ -322,10 +308,7 @@ const App = () => {
       const price = a.currentPrice || a.buyPrice;
       const valueEur = a.quantity * price * rate;
       const pct = (valueEur / totalValue) * 100;
-      return {
-        name: a.ticker || a.name || "Activo",
-        value: pct,
-      };
+      return { name: a.ticker || a.name || "Activo", value: pct };
     });
   })();
 
@@ -384,7 +367,6 @@ const App = () => {
       </header>
 
       <main className={`main-layout ${mainViewClass}`}>
-        {/* TARJETAS */}
         <section className="stats-grid">
           <div className="stat-card stat-red">
             <div className="stat-header">
@@ -441,7 +423,6 @@ const App = () => {
           </div>
         </section>
 
-        {/* BOTONES */}
         <section className="primary-actions">
           <button
             onClick={() => setIsFormVisible((v) => !v)}
@@ -453,7 +434,6 @@ const App = () => {
           <button className="btn outline-btn">Exportar a Excel</button>
         </section>
 
-        {/* TABLA */}
         <section className="panel table-panel">
           <div className="panel-header">
             <h2>Detalle de Activos</h2>
@@ -467,7 +447,6 @@ const App = () => {
           </div>
         </section>
 
-        {/* GRÁFICAS */}
         <section className="charts-grid">
           <div className="panel">
             <div className="panel-header">
@@ -522,7 +501,6 @@ const App = () => {
           </div>
         </section>
 
-        {/* FORMULARIO */}
         {isFormVisible && (
           <section className="panel form-panel">
             <div className="panel-header">
