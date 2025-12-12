@@ -27,6 +27,12 @@ const apis = [
     url: 'https://yahoo-finance-real-time1.p.rapidapi.com',
     key: 'c81c43aa05msh544e00a9b974533p1a80a9jsn8036a79fea7e',
     host: 'yahoo-finance-real-time1.p.rapidapi.com'
+  },
+  {
+    name: 'finnhub',
+    url: 'https://finnhub.io/api/v1/quote',
+    key: 'd4ea6s1r01qgp2f7iet0d4ea6s1r01qgp2f7ietg', // Reemplaza con tu clave de Finnhub
+    host: 'finnhub.io'
   }
 ];
 
@@ -182,17 +188,26 @@ const App = () => {
   // Función para actualizar precios usando la API actual
   const updatePrices = async (symbols, api) => {
     try {
-      const response = await fetch(`${api.url}/quotes`, {
-        method: 'POST',
-        headers: {
-          'x-rapidapi-key': api.key,
-          'x-rapidapi-host': api.host,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ symbols })
-      });
-      const data = await response.json();
-      return data;
+      if (api.name === 'finnhub') {
+        const responses = await Promise.all(symbols.map(async (symbol) => {
+          const response = await fetch(`${api.url}?symbol=${symbol}&token=${api.key}`);
+          const data = await response.json();
+          return { [symbol]: { price: data.c, change: data.d, changePercent: data.dp } };
+        }));
+        return Object.assign({}, ...responses);
+      } else {
+        const response = await fetch(`${api.url}/quotes`, {
+          method: 'POST',
+          headers: {
+            'x-rapidapi-key': api.key,
+            'x-rapidapi-host': api.host,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ symbols })
+        });
+        const data = await response.json();
+        return data;
+      }
     } catch (error) {
       console.error('Error updating prices:', error);
       return null;
@@ -219,7 +234,7 @@ const App = () => {
     setApiIndex((apiIndex + 1) % apis.length);
   };
 
-  // Actualización de precios cada 24 horas
+  // Actualización de precios cada hora
   useEffect(() => {
     if (assets.length === 0) return;
 
@@ -234,7 +249,7 @@ const App = () => {
     };
 
     run();
-    const interval = setInterval(run, 24 * 60 * 60 * 1000);
+    const interval = setInterval(run, 60 * 60 * 1000); // Cada hora
 
     return () => {
       cancelled = true;
