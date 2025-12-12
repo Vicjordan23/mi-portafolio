@@ -3,11 +3,32 @@ import DarkModeToggle from "./components/DarkModeToggle";
 import AddAssetForm from "./components/AddAssetForm";
 import AssetTable from "./components/AssetTable";
 import { getEurPerUsd } from "./yahooApi";
-import { getQuotesTwelveData } from "./priceApi";
 import PortfolioHistoryChart from "./components/PortfolioHistoryChart";
 import AllocationPieChart from "./components/AllocationPieChart";
 import { supabase } from "./supabaseClient";
 import "./index.css";
+
+// Lista de APIs y sus keys
+const apis = [
+  {
+    name: 'intraday',
+    url: 'https://intraday-stock-market-data.p.rapidapi.com',
+    key: 'c81c43aa05msh544e00a9b974533p1a80a9jsn8036a79fea7e',
+    host: 'intraday-stock-market-data.p.rapidapi.com'
+  },
+  {
+    name: 'jsonRealTime',
+    url: 'https://json-real-time-stock-data-api-python-for-free.p.rapidapi.com',
+    key: 'c81c43aa05msh544e00a9b974533p1a80a9jsn8036a79fea7e',
+    host: 'json-real-time-stock-data-api-python-for-free.p.rapidapi.com'
+  },
+  {
+    name: 'yahooRealTime',
+    url: 'https://yahoo-finance-real-time1.p.rapidapi.com',
+    key: 'c81c43aa05msh544e00a9b974533p1a80a9jsn8036a79fea7e',
+    host: 'yahoo-finance-real-time1.p.rapidapi.com'
+  }
+];
 
 const App = () => {
   const [assets, setAssets] = useState([]);
@@ -17,11 +38,8 @@ const App = () => {
   const [historyRange, setHistoryRange] = useState("1M");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [viewMode, setViewMode] = useState("desktop");
-
-  const [fxRates, setFxRates] = useState({
-    EUR: 1,
-    USD: 0.92,
-  });
+  const [fxRates, setFxRates] = useState({ EUR: 1, USD: 0.92 });
+  const [apiIndex, setApiIndex] = useState(0); // API actual
 
   const getRate = (currency) => fxRates[currency] || 1;
 
@@ -47,9 +65,7 @@ const App = () => {
             ticker: row.ticker,
             quantity: Number(row.quantity || 0),
             buyPrice: Number(row.buy_price || 0),
-            currentPrice: Number(
-              row.current_price || row.buy_price || 0
-            ),
+            currentPrice: Number(row.current_price || row.buy_price || 0),
             currency: row.currency || "EUR",
             date: row.date || "",
             dailyChange: 0,
@@ -111,21 +127,15 @@ const App = () => {
 
   // Añadir activo (Supabase)
   const handleAddAsset = async (newAsset) => {
-    console.log("Nuevo activo recibido del formulario:", newAsset);
-
     const record = {
       name: newAsset.name,
       ticker: newAsset.ticker,
       quantity: Number(newAsset.quantity || 0),
       buy_price: Number(newAsset.buyPrice || 0),
-      current_price: Number(
-        newAsset.currentPrice || newAsset.buyPrice || 0
-      ),
+      current_price: Number(newAsset.currentPrice || newAsset.buyPrice || 0),
       currency: newAsset.currency || "EUR",
       date: newAsset.date || null,
     };
-
-    console.log("Registro que se va a insertar en Supabase:", record);
 
     const { data, error } = await supabase
       .from("assets")
@@ -139,8 +149,6 @@ const App = () => {
       return;
     }
 
-    console.log("Insert OK, fila devuelta por Supabase:", data);
-
     setAssets((prev) => [
       ...prev,
       {
@@ -149,9 +157,7 @@ const App = () => {
         ticker: data.ticker,
         quantity: Number(data.quantity || 0),
         buyPrice: Number(data.buy_price || 0),
-        currentPrice: Number(
-          data.current_price || data.buy_price || 0
-        ),
+        currentPrice: Number(data.current_price || data.buy_price || 0),
         currency: data.currency || "EUR",
         date: data.date || "",
         dailyChange: 0,
@@ -173,45 +179,68 @@ const App = () => {
     setAssets((prev) => prev.filter((a) => a.id !== id));
   };
 
-  // Actualización de precios con Twelve Data cada 15 minutos
+  // Función para actualizar precios usando la API actual
+  const updatePrices = async (symbols, api) => {
+    try {
+      const response = await fetch(`${api.url}/quotes`, {
+        method: 'POST',
+        headers: {
+          'x-rapidapi-key': api.key,
+          'x-rapidapi-host': api.host,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ symbols })
+      });
+      const data = await response.json();
+      return data;
+    } catch (error) {
+      console.error('Error updating prices:', error);
+      return null;
+    }
+  };
+
+  const updatePricesFromRapidApi = async () => {
+    const currentApi = apis[apiIndex];
+    const symbols = assets.map(asset => asset.ticker);
+    const prices = await updatePrices(symbols, currentApi);
+    if (prices) {
+      setAssets(prev => prev.map(asset => {
+        const quote = prices[asset.ticker];
+        if (!quote) return asset;
+        return {
+          ...asset,
+          currentPrice: quote.price,
+          dailyChange: quote.change,
+          dailyChangePercent: quote.changePercent,
+        };
+      }));
+    }
+    // Cambia a la siguiente API
+    setApiIndex((apiIndex + 1) % apis.length);
+  };
+
+  // Actualización de precios cada 24 horas
   useEffect(() => {
     if (assets.length === 0) return;
 
     let cancelled = false;
 
-    const updatePrices = async () => {
+    const run = async () => {
       try {
-        const symbols = assets.map((a) => a.ticker).filter(Boolean);
-        if (!symbols.length) return;
-
-        const quotes = await getQuotesTwelveData(symbols);
-        if (cancelled) return;
-
-        setAssets((prev) =>
-          prev.map((asset) => {
-            const quote = quotes[asset.ticker];
-            if (!quote) return asset;
-            return {
-              ...asset,
-              currentPrice: quote.price,
-              dailyChange: quote.change,
-              dailyChangePercent: quote.changePercent,
-            };
-          })
-        );
+        await updatePricesFromRapidApi();
       } catch (e) {
-        console.error("Error actualizando precios con Twelve Data", e);
+        console.error("Error actualizando precios", e);
       }
     };
 
-    updatePrices();
-    const interval = setInterval(updatePrices, 15 * 60 * 1000);
+    run();
+    const interval = setInterval(run, 24 * 60 * 60 * 1000);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [assets.length]);
+  }, [assets.length, apiIndex]);
 
   const formatCurrency = (value) =>
     value.toLocaleString("es-ES", {
@@ -232,9 +261,7 @@ const App = () => {
   }, 0);
 
   const totalPnL = totalValue - totalInvestment;
-  const performance = totalInvestment
-    ? (totalPnL / totalInvestment) * 100
-    : 0;
+  const performance = totalInvestment ? (totalPnL / totalInvestment) * 100 : 0;
 
   const totalDailyPnL = assets.reduce((sum, a) => {
     const rate = getRate(a.currency);
@@ -347,9 +374,7 @@ const App = () => {
               📊
             </button>
             <button
-              className={
-                viewMode === "desktop" ? "view-btn active" : "view-btn"
-              }
+              className={viewMode === "desktop" ? "view-btn active" : "view-btn"}
               onClick={() => setViewMode("desktop")}
               title="Vista escritorio"
             >
@@ -428,7 +453,9 @@ const App = () => {
           >
             + Añadir Activo
           </button>
-          <button className="btn ghost-btn">Actualizar</button>
+          <button className="btn ghost-btn" onClick={updatePricesFromRapidApi}>
+            Actualizar
+          </button>
           <button className="btn outline-btn">Exportar a Excel</button>
         </section>
 
@@ -451,33 +478,25 @@ const App = () => {
               <h2>Evolución del Portafolio</h2>
               <div className="chart-range-toggle">
                 <button
-                  className={
-                    historyRange === "1D" ? "range-btn active" : "range-btn"
-                  }
+                  className={historyRange === "1D" ? "range-btn active" : "range-btn"}
                   onClick={() => setHistoryRange("1D")}
                 >
                   1D
                 </button>
                 <button
-                  className={
-                    historyRange === "1W" ? "range-btn active" : "range-btn"
-                  }
+                  className={historyRange === "1W" ? "range-btn active" : "range-btn"}
                   onClick={() => setHistoryRange("1W")}
                 >
                   1S
                 </button>
                 <button
-                  className={
-                    historyRange === "1M" ? "range-btn active" : "range-btn"
-                  }
+                  className={historyRange === "1M" ? "range-btn active" : "range-btn"}
                   onClick={() => setHistoryRange("1M")}
                 >
                   1M
                 </button>
                 <button
-                  className={
-                    historyRange === "1Y" ? "range-btn active" : "range-btn"
-                  }
+                  className={historyRange === "1Y" ? "range-btn active" : "range-btn"}
                   onClick={() => setHistoryRange("1Y")}
                 >
                   1A
